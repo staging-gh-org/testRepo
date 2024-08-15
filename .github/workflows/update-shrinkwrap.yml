@@ -40,21 +40,29 @@ jobs:
       - name: Generate shrinkwrap file
         run: npm shrinkwrap
 
-      - name: Create Pull Request
+      - name: Create or Update Pull Request
+        id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b update-shrinkwrap-file
+          
+          # Generate a unique branch name
+          BRANCH_NAME="update-shrinkwrap-$(date +%Y%m%d%H%M%S)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          git checkout -b $BRANCH_NAME
           git add .
           git commit -m "Update shrinkwrap file"
-          git push origin update-shrinkwrap-file
+          git push origin $BRANCH_NAME
+
           PR_URL=$(gh pr create --title "Update shrinkwrap file" \
                                 --body "Automatically generated PR to update the shrinkwrap file" \
                                 --base master \
-                                --head update-shrinkwrap-file)
-          echo "Created PR: $PR_URL"
+                                --head $BRANCH_NAME)
+
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           
           # Check if there are any checks
           if gh pr checks $PR_URL; then
@@ -71,4 +79,22 @@ jobs:
             echo "No checks found, proceeding with merge"
             gh pr merge $PR_URL --auto --merge
             echo "PR merged successfully"
+          fi
+
+      - name: Delete temporary branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
+          PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
+          
+          # Check if PR was merged
+          if gh pr view $PR_URL --json state | grep -q '"state": "MERGED"'; then
+            echo "PR was merged, deleting branch $BRANCH_NAME"
+            git push origin --delete $BRANCH_NAME
+          else
+            echo "PR was not merged, closing PR and deleting branch $BRANCH_NAME"
+            gh pr close $PR_URL
+            git push origin --delete $BRANCH_NAME
           fi
