@@ -41,32 +41,34 @@ jobs:
         run: npm shrinkwrap
 
       - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b update-shrinkwrap-file
-          git add npm-shrinkwrap.json
+          git add .
           git commit -m "Update shrinkwrap file"
           git push origin update-shrinkwrap-file
-
-      - name: Create and Auto-Merge Pull Request
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
           PR_URL=$(gh pr create --title "Update shrinkwrap file" \
                                 --body "Automatically generated PR to update the shrinkwrap file" \
                                 --base master \
                                 --head update-shrinkwrap-file)
           echo "Created PR: $PR_URL"
           
-          # Wait for checks to complete
-          gh pr checks $PR_URL --watch
-          
-          # If checks pass, merge the PR
+          # Check if there are any checks
           if gh pr checks $PR_URL; then
+            echo "Checks found, waiting for completion..."
+            gh pr checks $PR_URL --watch
+            if gh pr checks $PR_URL; then
+              gh pr merge $PR_URL --auto --merge
+              echo "PR merged successfully"
+            else
+              echo "Checks failed, PR was not merged"
+              exit 1
+            fi
+          else
+            echo "No checks found, proceeding with merge"
             gh pr merge $PR_URL --auto --merge
             echo "PR merged successfully"
-          else
-            echo "Checks failed, PR was not merged"
-            exit 1
           fi
