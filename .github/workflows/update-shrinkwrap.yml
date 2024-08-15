@@ -23,6 +23,7 @@ jobs:
         with:
           app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
           private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
+      - run: echo "Token created successfully"
 
       - name: Checkout repository
         uses: actions/checkout@v4
