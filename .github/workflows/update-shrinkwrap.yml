@@ -70,14 +70,14 @@ jobs:
             gh pr checks $PR_URL --watch
             if gh pr checks $PR_URL; then
               echo "Checks passed, merging PR"
-              gh pr merge $PR_URL --merge
+              gh pr merge $PR_URL --merge --admin
             else
               echo "Checks failed, PR was not merged"
               exit 1
             fi
           else
             echo "No checks found, merging PR immediately"
-            gh pr merge $PR_URL --merge
+            gh pr merge $PR_URL --merge --admin
           fi
 
       - name: Delete temporary branch
