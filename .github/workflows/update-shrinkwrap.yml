@@ -10,12 +10,11 @@ env:
 
 jobs:
   generate-shrinkwrap:
-
     runs-on: ubuntu-latest
     environment: Hatcher+ FAAST
-
     permissions:
       contents: write
+      pull-requests: write
       
     steps:
       - uses: actions/create-github-app-token@v1
@@ -23,7 +22,6 @@ jobs:
         with:
           app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
           private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
-      - run: echo "Token created successfully"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,10 +40,33 @@ jobs:
       - name: Generate shrinkwrap file
         run: npm shrinkwrap
 
-      - name: Commit and push shrinkwrap file
+      - name: Create Pull Request
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b update-shrinkwrap-file
           git add npm-shrinkwrap.json
           git commit -m "Update shrinkwrap file"
-          git push origin master
+          git push origin update-shrinkwrap-file
+
+      - name: Create and Auto-Merge Pull Request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          PR_URL=$(gh pr create --title "Update shrinkwrap file" \
+                                --body "Automatically generated PR to update the shrinkwrap file" \
+                                --base master \
+                                --head update-shrinkwrap-file)
+          echo "Created PR: $PR_URL"
+          
+          # Wait for checks to complete
+          gh pr checks $PR_URL --watch
+          
+          # If checks pass, merge the PR
+          if gh pr checks $PR_URL; then
+            gh pr merge $PR_URL --auto --merge
+            echo "PR merged successfully"
+          else
+            echo "Checks failed, PR was not merged"
+            exit 1
+          fi
