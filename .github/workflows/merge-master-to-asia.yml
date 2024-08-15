@@ -1,0 +1,56 @@
+name: Auto-Merge master to asia
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  merge_master_to_asia:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout master branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Git
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      - name: Create a temporary branch
+        run: |
+          git checkout -b auto-merge-master-to-asia
+          git push origin auto-merge-master-to-asia
+
+      - name: Create Pull Request
+        id: create_pr
+        uses: peter-evans/create-pull-request@v6.0.5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Merging changes from master to asia"
+          title: "Auto-Merge master to asia"
+          body: "This pull request is automatically created to merge changes from master to asia"
+          base: asia
+          branch: auto-merge-master-to-asia
+
+      - name: Merge pull request
+        if: steps.create_pr.outputs.pull-request-url != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr_number = ${{ steps.create_pr.outputs.pull-request-number }};
+            await github.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr_number,
+              merge_method: 'squash'
+            });
+
+      - name: Delete temporary branch
+        if: steps.create_pr.outputs.pull-request-url != ''
+        run: |
+          git push origin --delete auto-merge-master-to-asia
