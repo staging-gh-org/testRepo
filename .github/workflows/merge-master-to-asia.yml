@@ -1,4 +1,4 @@
-name: Auto-Rebase master onto asia
+name: Auto-Merge master to asia
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  rebase_master_onto_asia:
+  merge_master_to_asia:
     runs-on: ubuntu-latest
     environment: Hatcher+ FAAST
     permissions:
@@ -30,36 +30,68 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global pull.rebase false  # Ensures merge strategy
 
-      - name: Rebase asia onto master
+      - name: Update Local Master Branch
+        run: |
+          git checkout master
+          git pull origin master
+
+      - name: Create PR and Handle Merge Conflicts
+        id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # Checkout the asia branch
-          git checkout asia
+          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
           
-          # Rebase asia onto master
-          if git rebase origin/master; then
-            echo "Rebase successful"
+          # Create and switch to the new branch based on 'asia'
+          git checkout -b $BRANCH_NAME origin/asia
+          
+          # Merge 'master' into the new branch
+          if git merge master --no-commit --no-ff; then
+            echo "No merge conflicts detected"
+            git commit -m "Auto-merged master into asia"
             CONFLICTS=false
           else
-            echo "Rebase conflicts detected"
-            git rebase --abort
+            echo "Merge conflicts detected"
+            git merge --abort
             CONFLICTS=true
           fi
-
-      - name: Push changes if rebase successful
-        if: success()
-        run: |
-          if [ "$CONFLICTS" = false ]; then
-            git push origin asia --force-with-lease
-            echo "Rebase completed and pushed to asia"
+          
+          git push origin $BRANCH_NAME
+          
+          if [ "$CONFLICTS" = true ]; then
+            PR_TITLE="[Needs Review] Auto-Merge master to asia"
+            PR_BODY="This pull request is automatically created to merge changes from master to asia. **Merge conflicts detected. Manual review required.**"
           else
-            echo "Rebase failed due to conflicts, no changes were pushed"
-            exit 1
+            PR_TITLE="Auto-Merge master to asia"
+            PR_BODY="This pull request is automatically created to merge changes from master to asia."
           fi
 
-      - name: Clean up
+          PR_URL=$(gh pr create --title "$PR_TITLE" \
+                                --body "$PR_BODY" \
+                                --base asia \
+                                --head $BRANCH_NAME \
+                                --reviewer "<REVIEWER_USERNAME>")
+          
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
+          echo "Created PR: $PR_URL"
+
+          if [ "$CONFLICTS" = false ]; then
+            echo "Attempting to merge PR..."
+            gh pr merge $PR_URL --squash --admin --delete-branch
+          else
+            echo "Merge conflicts detected. PR created for manual review."
+          fi
+
+      - name: Cleanup
         if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          echo "Clean up completed"
+          BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
+          
+          # Attempt to delete the branch locally and remotely, ignore errors
+          git branch -D $BRANCH_NAME || true
+          git push origin --delete $BRANCH_NAME || true
