@@ -32,10 +32,13 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create and merge PR
+        id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
           git checkout -b $BRANCH_NAME
           git push origin $BRANCH_NAME
 
@@ -44,6 +47,7 @@ jobs:
                                 --base asia \
                                 --head $BRANCH_NAME)
 
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
 
           if gh pr checks $PR_URL; then
@@ -66,7 +70,24 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
+          PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
           
-          # Try to delete the branch, ignoring errors
-          git push origin --delete $BRANCH_NAME || true
+          if [ -n "$PR_URL" ]; then
+            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
+            
+            if [ "$PR_STATE" = "MERGED" ]; then
+              echo "PR was merged successfully"
+            elif [ "$PR_STATE" = "OPEN" ]; then
+              echo "PR is still open, closing PR"
+              gh pr close $PR_URL
+            else
+              echo "PR is in state $PR_STATE or doesn't exist"
+            fi
+          else
+            echo "No PR was created"
+          fi
+          
+          # Always try to delete the branch, ignoring errors
+          echo "Attempting to delete branch $BRANCH_NAME"
+          git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME may have already been deleted"
