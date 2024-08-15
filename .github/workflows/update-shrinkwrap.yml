@@ -1,13 +1,10 @@
 name: Update Shrinkwrap
-
 on:
   push:
     branches:
       - master
-
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   generate-shrinkwrap:
     runs-on: ubuntu-latest
@@ -22,24 +19,19 @@ jobs:
         with:
           app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
           private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install dependencies
         run: npm install
-
       - name: Generate shrinkwrap file
         run: npm shrinkwrap
-
       - name: Create Pull Request and Merge
         id: create_pr
         env:
@@ -48,7 +40,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Generate a unique branch name
           BRANCH_NAME="update-shrinkwrap-$(date +%Y%m%d%H%M%S)"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
           
@@ -56,15 +47,12 @@ jobs:
           git add .
           git commit -m "Update shrinkwrap file"
           git push origin $BRANCH_NAME
-
           PR_URL=$(gh pr create --title "Update shrinkwrap file" \
                                 --body "Automatically generated PR to update the shrinkwrap file" \
                                 --base master \
                                 --head $BRANCH_NAME)
-
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           
-          # Check if there are any checks
           if gh pr checks $PR_URL; then
             echo "Checks found, waiting for completion..."
             gh pr checks $PR_URL --watch
@@ -79,7 +67,6 @@ jobs:
             echo "No checks found, merging PR immediately"
             gh pr merge $PR_URL --merge --admin
           fi
-
       - name: Delete temporary branch
         if: always()
         env:
@@ -88,12 +75,17 @@ jobs:
           BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
           PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
           
-          # Check if PR was merged
-          if gh pr view $PR_URL --json state | grep -q '"state": "MERGED"'; then
+          PR_STATE=$(gh pr view $PR_URL --json state --jq .state)
+          echo "PR state: $PR_STATE"
+          
+          if [ "$PR_STATE" = "MERGED" ]; then
             echo "PR was merged, deleting branch $BRANCH_NAME"
-            git push origin --delete $BRANCH_NAME
-          else
-            echo "PR was not merged, closing PR and deleting branch $BRANCH_NAME"
+            git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME already deleted"
+          elif [ "$PR_STATE" = "OPEN" ]; then
+            echo "PR is still open, closing PR and deleting branch $BRANCH_NAME"
             gh pr close $PR_URL
-            git push origin --delete $BRANCH_NAME
+            git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME already deleted"
+          else
+            echo "PR is in state $PR_STATE, deleting branch $BRANCH_NAME if it exists"
+            git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME already deleted"
           fi
