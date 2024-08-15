@@ -5,9 +5,6 @@ on:
     branches:
       - master
 
-env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   generate-shrinkwrap:
     runs-on: ubuntu-latest
@@ -40,7 +37,7 @@ jobs:
       - name: Generate shrinkwrap file
         run: npm shrinkwrap
 
-      - name: Create or Update Pull Request
+      - name: Create and Auto-Merge Pull Request
         id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -64,24 +61,18 @@ jobs:
 
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           
+          # Enable auto-merge
+          gh pr merge $PR_URL --auto --merge
+
           # Check if there are any checks
           if gh pr checks $PR_URL; then
             echo "Checks found, waiting for completion..."
             gh pr checks $PR_URL --watch
-            if gh pr checks $PR_URL; then
-              gh pr merge $PR_URL --auto --merge
-              echo "PR merged successfully"
-            else
-              echo "Checks failed, PR was not merged"
-              exit 1
-            fi
           else
-            echo "No checks found, proceeding with merge"
-            gh pr merge $PR_URL --auto --merge
-            echo "PR merged successfully"
+            echo "No checks found, PR will be merged automatically when possible"
           fi
 
-      - name: Delete temporary branch
+      - name: Check PR status and clean up
         if: always()
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -89,12 +80,15 @@ jobs:
           BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
           PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
           
-          # Check if PR was merged
-          if gh pr view $PR_URL --json state | grep -q '"state": "MERGED"'; then
-            echo "PR was merged, deleting branch $BRANCH_NAME"
-            git push origin --delete $BRANCH_NAME
+          # Check PR status
+          PR_STATE=$(gh pr view $PR_URL --json state --jq .state)
+          
+          if [ "$PR_STATE" = "MERGED" ]; then
+            echo "PR was merged successfully"
+          elif [ "$PR_STATE" = "OPEN" ]; then
+            echo "PR is still open, it will be merged automatically when checks pass"
           else
-            echo "PR was not merged, closing PR and deleting branch $BRANCH_NAME"
+            echo "PR is in unexpected state: $PR_STATE"
             gh pr close $PR_URL
             git push origin --delete $BRANCH_NAME
           fi
