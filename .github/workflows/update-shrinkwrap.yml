@@ -12,6 +12,7 @@ jobs:
   generate-shrinkwrap:
 
     runs-on: ubuntu-latest
+    environment: Hatcher+ FAAST
 
     permissions:
       contents: write
