@@ -1,4 +1,4 @@
-name: Auto-Merge master to asia
+name: Auto-Rebase master onto asia
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  merge_master_to_asia:
+  rebase_master_onto_asia:
     runs-on: ubuntu-latest
     environment: Hatcher+ FAAST
     permissions:
@@ -31,85 +31,35 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create PR and handle merge conflicts
-        id: create_pr
+      - name: Rebase asia onto master
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          # Checkout the asia branch
+          git checkout asia
           
-          git checkout -b $BRANCH_NAME
-          
-          # Attempt to merge asia into the new branch
-          if git merge origin/asia --no-commit --no-ff; then
-            echo "No merge conflicts detected"
+          # Rebase asia onto master
+          if git rebase origin/master; then
+            echo "Rebase successful"
             CONFLICTS=false
           else
-            echo "Merge conflicts detected"
-            git merge --abort
+            echo "Rebase conflicts detected"
+            git rebase --abort
             CONFLICTS=true
           fi
-          
-          git push origin $BRANCH_NAME
 
-          if [ "$CONFLICTS" = true ]; then
-            PR_TITLE="[Needs Review] Auto-Merge master to asia"
-            PR_BODY="This pull request is automatically created to merge changes from master to asia. **Merge conflicts detected. Manual review required.**"
-          else
-            PR_TITLE="Auto-Merge master to asia"
-            PR_BODY="This pull request is automatically created to merge changes from master to asia."
-          fi
-
-          PR_URL=$(gh pr create --title "$PR_TITLE" \
-                                --body "$PR_BODY" \
-                                --base asia \
-                                --head $BRANCH_NAME)
-
-          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
-          echo "Created PR: $PR_URL"
-
+      - name: Push changes if rebase successful
+        if: success()
+        run: |
           if [ "$CONFLICTS" = false ]; then
-            if gh pr checks $PR_URL; then
-              echo "Checks found, waiting for completion..."
-              gh pr checks $PR_URL --watch
-              if gh pr checks $PR_URL; then
-                echo "Checks passed, merging PR"
-                gh pr merge $PR_URL --squash --admin
-              else
-                echo "Checks failed, PR was not merged"
-                exit 1
-              fi
-            else
-              echo "No checks found, merging PR immediately"
-              gh pr merge $PR_URL --squash --admin
-            fi
+            git push origin asia --force-with-lease
+            echo "Rebase completed and pushed to asia"
           else
-            echo "Merge conflicts detected. PR created for manual review."
+            echo "Rebase failed due to conflicts, no changes were pushed"
+            exit 1
           fi
 
       - name: Clean up
         if: always()
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
-          PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
-          
-          if [ -n "$PR_URL" ]; then
-            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
-            
-            if [ "$PR_STATE" = "MERGED" ]; then
-              echo "PR was merged successfully"
-            elif [ "$PR_STATE" = "OPEN" ]; then
-              echo "PR is still open (possibly due to conflicts)"
-            else
-              echo "PR is in state $PR_STATE or doesn't exist"
-            fi
-          else
-            echo "No PR was created"
-          fi
-          
-          # Always try to delete the branch, ignoring errors
-          echo "Attempting to delete branch $BRANCH_NAME"
-          git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME may have already been deleted"
+          echo "Clean up completed"
