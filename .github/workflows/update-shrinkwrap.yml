@@ -3,7 +3,7 @@ name: Update Shrinkwrap
 on:
   push:
     branches:
-      - staging
+      - master
 
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
