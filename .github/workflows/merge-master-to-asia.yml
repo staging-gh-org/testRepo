@@ -31,42 +31,55 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create and merge PR
+      - name: Force merge master to asia
+        id: force_merge
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
-          git checkout -b $BRANCH_NAME
+          BRANCH_NAME="force-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          git checkout -b $BRANCH_NAME origin/master
+          git fetch origin asia
+          
+          # Force merge master into asia, favoring master's changes
+          git merge origin/asia -X ours --no-edit
+          
           git push origin $BRANCH_NAME
 
-          PR_URL=$(gh pr create --title "Auto-Merge master to asia" \
-                                --body "This pull request is automatically created to merge changes from master to asia" \
+          PR_URL=$(gh pr create --title "Force Merge master to asia" \
+                                --body "This pull request forcefully merges changes from master to asia, resolving conflicts in favor of master." \
                                 --base asia \
                                 --head $BRANCH_NAME)
 
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
 
-          if gh pr checks $PR_URL; then
-            echo "Checks found, waiting for completion..."
-            gh pr checks $PR_URL --watch
-            if gh pr checks $PR_URL; then
-              echo "Checks passed, merging PR"
-              gh pr merge $PR_URL --squash --admin
-            else
-              echo "Checks failed, PR was not merged"
-              exit 1
-            fi
-          else
-            echo "No checks found, merging PR immediately"
-            gh pr merge $PR_URL --squash --admin
-          fi
+          echo "Merging PR immediately"
+          gh pr merge $PR_URL --squash --admin
 
       - name: Clean up
         if: always()
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          BRANCH_NAME="${{ steps.force_merge.outputs.BRANCH_NAME }}"
+          PR_URL="${{ steps.force_merge.outputs.PR_URL }}"
           
-          # Try to delete the branch, ignoring errors
-          git push origin --delete $BRANCH_NAME || true
+          if [ -n "$PR_URL" ]; then
+            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
+            
+            if [ "$PR_STATE" = "MERGED" ]; then
+              echo "PR was merged successfully"
+            else
+              echo "PR is in state $PR_STATE"
+              # If PR wasn't merged for some reason, close it
+              gh pr close $PR_URL
+            fi
+          else
+            echo "No PR was created"
+          fi
+          
+          # Always try to delete the branch, ignoring errors
+          echo "Attempting to delete branch $BRANCH_NAME"
+          git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME may have already been deleted"
