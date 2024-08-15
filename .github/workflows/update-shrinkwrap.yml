@@ -1,0 +1,104 @@
+name: Update Shrinkwrap
+on:
+  push:
+    branches:
+      - master
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  generate-shrinkwrap:
+    runs-on: ubuntu-latest
+    environment: Hatcher+ FAAST
+    permissions:
+      contents: write
+      pull-requests: write
+      
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
+          private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Generate shrinkwrap file
+        run: npm shrinkwrap
+      - name: Check for changes and create PR if needed
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          BRANCH_NAME="update-shrinkwrap-$(date +%Y%m%d%H%M%S)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          git checkout -b $BRANCH_NAME
+          git add npm-shrinkwrap.json
+          
+          if git diff --staged --quiet; then
+            echo "No changes in npm-shrinkwrap.json, skipping PR creation"
+            echo "CHANGES_DETECTED=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected in npm-shrinkwrap.json, creating PR"
+            echo "CHANGES_DETECTED=true" >> $GITHUB_OUTPUT
+            
+            git commit -m "Update shrinkwrap file"
+            git push origin $BRANCH_NAME
+            PR_URL=$(gh pr create --title "Update shrinkwrap file" \
+                                  --body "Automatically generated PR to update the shrinkwrap file" \
+                                  --base master \
+                                  --head $BRANCH_NAME)
+            echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
+            
+            if gh pr checks $PR_URL; then
+              echo "Checks found, waiting for completion..."
+              gh pr checks $PR_URL --watch
+              if gh pr checks $PR_URL; then
+                echo "Checks passed, merging PR"
+                gh pr merge $PR_URL --merge --admin
+              else
+                echo "Checks failed, PR was not merged"
+                exit 1
+              fi
+            else
+              echo "No checks found, merging PR immediately"
+              gh pr merge $PR_URL --merge --admin
+            fi
+          fi
+      - name: Clean up
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
+          CHANGES_DETECTED="${{ steps.create_pr.outputs.CHANGES_DETECTED }}"
+          
+          if [ "$CHANGES_DETECTED" = "true" ]; then
+            PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
+            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
+            
+            if [ "$PR_STATE" = "MERGED" ]; then
+              echo "PR was merged, deleting branch $BRANCH_NAME"
+            elif [ "$PR_STATE" = "OPEN" ]; then
+              echo "PR is still open, closing PR"
+              gh pr close $PR_URL
+            else
+              echo "PR is in state $PR_STATE or doesn't exist"
+            fi
+          else
+            echo "No changes were detected, no PR was created"
+          fi
+          
+          # Always try to delete the branch, ignoring errors
+          git push origin --delete $BRANCH_NAME || true
