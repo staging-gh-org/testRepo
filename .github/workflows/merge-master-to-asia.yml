@@ -73,7 +73,6 @@ jobs:
                                 --body "$PR_BODY" \
                                 --base asia \
                                 --head $BRANCH_NAME \
-                                --reviewer "<REVIEWER_USERNAME>")
           
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
