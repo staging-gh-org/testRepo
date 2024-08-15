@@ -1,4 +1,4 @@
-name: Auto-Merge master to asia
+name: Auto-Force-Push master to asia
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  merge_master_to_asia:
+  force_push_master_to_asia:
     runs-on: ubuntu-latest
     environment: Hatcher+ FAAST
     permissions:
@@ -30,67 +30,49 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global pull.rebase false  # Ensures merge strategy
 
-      - name: Update Local Master Branch
+      - name: Create a new branch from master
         run: |
-          git checkout master
-          git pull origin master
+          BRANCH_NAME="auto-force-push-master-to-asia-$(date +%Y%m%d%H%M%S)"
+          git checkout -b $BRANCH_NAME
+          git push origin $BRANCH_NAME
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
-      - name: Create PR and Handle Merge Conflicts
+      - name: Create PR
         id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="auto-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          
-          # Create and switch to the new branch based on 'asia'
-          git checkout -b $BRANCH_NAME origin/asia
-          
-          # Merge 'master' into the new branch
-          if git merge master --no-commit --no-ff; then
-            echo "No merge conflicts detected"
-            git commit -m "Auto-merged master into asia"
-            CONFLICTS=false
-          else
-            echo "Merge conflicts detected"
-            git merge --abort
-            CONFLICTS=true
-          fi
-          
-          git push origin $BRANCH_NAME
-          
-          if [ "$CONFLICTS" = true ]; then
-            PR_TITLE="[Needs Review] Auto-Merge master to asia"
-            PR_BODY="This pull request is automatically created to merge changes from master to asia. **Merge conflicts detected. Manual review required.**"
-          else
-            PR_TITLE="Auto-Merge master to asia"
-            PR_BODY="This pull request is automatically created to merge changes from master to asia."
-          fi
-
+          PR_TITLE="Auto-Force-Push master to asia"
+          PR_BODY="This pull request is automatically created to prepare for force-pushing changes from master to asia."
           PR_URL=$(gh pr create --title "$PR_TITLE" \
                                 --body "$PR_BODY" \
                                 --base asia \
-                                --head $BRANCH_NAME \")
-          
+                                --head $BRANCH_NAME)
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
 
-          if [ "$CONFLICTS" = false ]; then
-            echo "Attempting to merge PR..."
-            gh pr merge $PR_URL --squash --admin --delete-branch
-          else
-            echo "Merge conflicts detected. PR created for manual review."
-          fi
+      - name: Force-Push Master to Asia
+        run: |
+          # Ensure the master branch is up-to-date
+          git checkout master
+          git pull origin master
+          
+          # Force push master to asia, making them identical
+          git push origin master:asia --force
 
-      - name: Cleanup
+      - name: Close and Clean Up PR
         if: always()
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          PR_URL="${{ steps.create_pr.outputs.PR_URL }}"
           BRANCH_NAME="${{ steps.create_pr.outputs.BRANCH_NAME }}"
-          
-          # Attempt to delete the branch locally and remotely, ignore errors
-          git branch -D $BRANCH_NAME || true
-          git push origin --delete $BRANCH_NAME || true
+
+          if [ -n "$PR_URL" ]; then
+            # Close the PR
+            gh pr close $PR_URL --delete-branch
+            echo "PR closed and branch deleted"
+          else
+            echo "No PR was created"
+          fi
