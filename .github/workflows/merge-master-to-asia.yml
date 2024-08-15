@@ -72,7 +72,7 @@ jobs:
           PR_URL=$(gh pr create --title "$PR_TITLE" \
                                 --body "$PR_BODY" \
                                 --base asia \
-                                --head $BRANCH_NAME \
+                                --head $BRANCH_NAME \)
           
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
