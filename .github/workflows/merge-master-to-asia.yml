@@ -31,7 +31,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create and merge PR
+      - name: Create PR and handle merge conflicts
         id: create_pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -40,29 +40,52 @@ jobs:
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
           
           git checkout -b $BRANCH_NAME
+          
+          # Attempt to merge asia into the new branch
+          if git merge origin/asia --no-commit --no-ff; then
+            echo "No merge conflicts detected"
+            CONFLICTS=false
+          else
+            echo "Merge conflicts detected"
+            git merge --abort
+            CONFLICTS=true
+          fi
+          
           git push origin $BRANCH_NAME
 
-          PR_URL=$(gh pr create --title "Auto-Merge master to asia" \
-                                --body "This pull request is automatically created to merge changes from master to asia" \
+          if [ "$CONFLICTS" = true ]; then
+            PR_TITLE="[Needs Review] Auto-Merge master to asia"
+            PR_BODY="This pull request is automatically created to merge changes from master to asia. **Merge conflicts detected. Manual review required.**"
+          else
+            PR_TITLE="Auto-Merge master to asia"
+            PR_BODY="This pull request is automatically created to merge changes from master to asia."
+          fi
+
+          PR_URL=$(gh pr create --title "$PR_TITLE" \
+                                --body "$PR_BODY" \
                                 --base asia \
                                 --head $BRANCH_NAME)
 
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           echo "Created PR: $PR_URL"
 
-          if gh pr checks $PR_URL; then
-            echo "Checks found, waiting for completion..."
-            gh pr checks $PR_URL --watch
+          if [ "$CONFLICTS" = false ]; then
             if gh pr checks $PR_URL; then
-              echo "Checks passed, merging PR"
-              gh pr merge $PR_URL --squash --admin
+              echo "Checks found, waiting for completion..."
+              gh pr checks $PR_URL --watch
+              if gh pr checks $PR_URL; then
+                echo "Checks passed, merging PR"
+                gh pr merge $PR_URL --squash --admin
+              else
+                echo "Checks failed, PR was not merged"
+                exit 1
+              fi
             else
-              echo "Checks failed, PR was not merged"
-              exit 1
+              echo "No checks found, merging PR immediately"
+              gh pr merge $PR_URL --squash --admin
             fi
           else
-            echo "No checks found, merging PR immediately"
-            gh pr merge $PR_URL --squash --admin
+            echo "Merge conflicts detected. PR created for manual review."
           fi
 
       - name: Clean up
@@ -79,8 +102,7 @@ jobs:
             if [ "$PR_STATE" = "MERGED" ]; then
               echo "PR was merged successfully"
             elif [ "$PR_STATE" = "OPEN" ]; then
-              echo "PR is still open, closing PR"
-              gh pr close $PR_URL
+              echo "PR is still open (possibly due to conflicts)"
             else
               echo "PR is in state $PR_STATE or doesn't exist"
             fi
