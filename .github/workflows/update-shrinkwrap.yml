@@ -40,6 +40,16 @@ jobs:
       - name: Generate shrinkwrap file
         run: npm shrinkwrap
 
+      - name: Enable auto-merge for repository
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api \
+            --method PATCH \
+            -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }} \
+            -f allow_auto_merge=true
+
       - name: Create or Update Pull Request
         id: create_pr
         env:
@@ -64,21 +74,21 @@ jobs:
 
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
           
+          # Enable auto-merge for this PR
+          gh pr merge $PR_URL --auto --merge
+
           # Check if there are any checks
           if gh pr checks $PR_URL; then
             echo "Checks found, waiting for completion..."
             gh pr checks $PR_URL --watch
             if gh pr checks $PR_URL; then
-              gh pr merge $PR_URL --auto --merge
-              echo "PR merged successfully"
+              echo "Checks passed, PR will be merged automatically"
             else
               echo "Checks failed, PR was not merged"
               exit 1
             fi
           else
-            echo "No checks found, proceeding with merge"
-            gh pr merge $PR_URL --auto --merge
-            echo "PR merged successfully"
+            echo "No checks found, PR will be merged automatically"
           fi
 
       - name: Delete temporary branch
