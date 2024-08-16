@@ -44,7 +44,7 @@ jobs:
             echo "Error: $SCRIPT_PATH not found"
             exit 1
           fi
-          TRANSLATIONS=$(node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
+          TRANSLATIONS=$(node --experimental-modules --es-module-specifier-resolution=node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
           echo "translations=$TRANSLATIONS" >> $GITHUB_OUTPUT
 
       - name: Update translations file
