@@ -22,20 +22,26 @@ async function getTranslations(bearerToken) {
 function findTranslationsInFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const pattern = /\$t\(['"](.+?)['"]\)|\$__\(['"](.+?)['"]\)/g;
-  const translations = new Set();
+  const translations = new Map();
   let match;
   while ((match = pattern.exec(content)) !== null) {
-    translations.add(match[1] || match[2]);
+    const key = match[1] || match[2];
+    const line = content.substring(0, match.index).split('\n').length;
+    translations.set(key, { file: filePath, line });
   }
   return translations;
 }
 
 function scanForTranslations() {
-  const translations = new Set();
-  const files = glob.sync('**/*.{js,vue,ts}', { ignore: ['node_modules/**', 'dist/**'] });
+  const translations = new Map();
+  const files = glob.sync('**/*.{js,vue,blade.php}', { ignore: ['node_modules/**', 'dist/**'] });
   files.forEach(file => {
     const fileTranslations = findTranslationsInFile(file);
-    fileTranslations.forEach(translation => translations.add(translation));
+    fileTranslations.forEach((value, key) => {
+      if (!translations.has(key) || translations.get(key).file === 'Unknown') {
+        translations.set(key, value);
+      }
+    });
   });
   return translations;
 }
@@ -51,32 +57,27 @@ function getNewTranslationsFromLatestCommit() {
   return newTranslations;
 }
 
-function getFileAndLineForTranslation(key) {
-  try {
-    const result = execSync(`git grep -n "$t('${key}')" "$__('${key}')"`, { encoding: 'utf-8' });
-    const [file, line] = result.split(':');
-    return { file, line: line.trim() };
-  } catch (error) {
-    return { file: 'Unknown', line: 'Unknown' };
-  }
-}
-
 async function main(bearerToken) {
   try {
     const existingTranslations = await getTranslations(bearerToken);
     const scannedTranslations = scanForTranslations();
     const newTranslationsFromLatestCommit = getNewTranslationsFromLatestCommit();
 
-    const allTranslations = new Map();
+    const allTranslations = [];
 
-    for (const translation of scannedTranslations) {
-      const status = existingTranslations.has(translation) ? 'Existing' : 'Missing';
-      const { file, line } = getFileAndLineForTranslation(translation);
-      allTranslations.set(translation, { status, file, line, isNew: newTranslationsFromLatestCommit.has(translation) });
+    for (const [key, location] of scannedTranslations.entries()) {
+      const status = existingTranslations.has(key) ? 'Existing' : 'Missing';
+      allTranslations.push({
+        key,
+        status,
+        file: location.file,
+        line: location.line,
+        isNew: newTranslationsFromLatestCommit.has(key)
+      });
     }
 
     const result = {
-      allTranslations: Array.from(allTranslations, ([key, value]) => ({ key, ...value })),
+      allTranslations,
       newTranslations: Array.from(newTranslationsFromLatestCommit)
     };
 
