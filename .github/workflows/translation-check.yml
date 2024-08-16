@@ -104,6 +104,7 @@ jobs:
               committer=$(echo $new_translation | jq -r '.committer')
               COMMIT_MESSAGE="Translation \`$key\` was added by \`$committer\`"
               git commit -m "$COMMIT_MESSAGE"
+              git add "$MD_FILE"  # Restage the file for the next commit
             done
           else
             git commit -m "Update translations status"
