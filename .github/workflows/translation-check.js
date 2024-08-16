@@ -90,7 +90,7 @@ async function main(bearerToken) {
       const committer = isNew ? newTranslationsFromLatestCommit.get(key) : '';
       const previousStatus = previousTranslations.get(key);
 
-      if (isNew || status !== previousStatus) {
+      if (isNew || status !== previousStatus || !previousTranslations.has(key)) {
         hasChanges = true;
       }
 
@@ -102,6 +102,14 @@ async function main(bearerToken) {
         isNew,
         committer
       });
+    }
+
+    // Check for removed translations
+    for (const [key] of previousTranslations) {
+      if (!scannedTranslations.has(key)) {
+        hasChanges = true;
+        break;
+      }
     }
 
     const result = {
