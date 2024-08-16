@@ -5,7 +5,7 @@ import HelloWorld from './components/HelloWorld.vue'
 <template>
   <div>
     <a href="https://vitejs.dev" target="_blank">
-      {{ $t('1_jan_31_dec') }}
+      {{ $t('24_7_Surveillance') }}
       <img src="/vite.svg" class="logo" alt="Vite logo" />
     </a>
     <a href="https://vuejs.org/" target="_blank">
@@ -13,7 +13,7 @@ import HelloWorld from './components/HelloWorld.vue'
 
     </a>
   </div>
-  {{ $t('hello') }}
+  {{ $t('ayoub_rahmani') }}
   <HelloWorld msg="Vite + Vue" />
 </template>
 
