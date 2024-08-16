@@ -1,6 +1,8 @@
 import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import axios from 'axios';
+import { glob } from 'glob';
 
 async function getTranslations(bearerToken) {
   if (!bearerToken) {
@@ -17,71 +19,68 @@ async function getTranslations(bearerToken) {
   }
 }
 
-function findTranslationLocation(key) {
-  const command = `git diff HEAD^ HEAD -U0 | grep -n "+.*['\\"]${key}['\\"]"`;
-  try {
-    const result = execSync(command, { encoding: 'utf-8' });
-    const match = result.match(/\+\+\+ b\/(.+)\n@@ .+ @@\n(\d+):/);
-    if (match) {
-      return { file: match[1], line: match[2] };
-    }
-  } catch (error) {
-    // grep returns non-zero exit code if no match found
+function findTranslationsInFile(filePath) {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const pattern = /\$t\(['"](.+?)['"]\)|\$__\(['"](.+?)['"]\)/g;
+  const translations = new Set();
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    translations.add(match[1] || match[2]);
   }
-  return null;
+  return translations;
 }
 
-function parseMdTable(content) {
-  const lines = content.split('\n').slice(2); // Skip header
-  return lines.map(line => {
-    const [key, status, location] = line.split('|').map(cell => cell.trim());
-    return { key: key.replace(/[\[\]\`]/g, ''), status, location };
+function scanForTranslations() {
+  const translations = new Set();
+  const files = glob.sync('**/*.{js,vue,ts}', { ignore: ['node_modules/**', 'dist/**'] });
+  files.forEach(file => {
+    const fileTranslations = findTranslationsInFile(file);
+    fileTranslations.forEach(translation => translations.add(translation));
   });
+  return translations;
+}
+
+function getNewTranslationsFromLatestCommit() {
+  const diff = execSync('git diff HEAD^ HEAD').toString();
+  const pattern = /\+.*\$t\(['"](.+?)['"]\)|\+.*\$__\(['"](.+?)['"]\)/g;
+  const newTranslations = new Set();
+  let match;
+  while ((match = pattern.exec(diff)) !== null) {
+    newTranslations.add(match[1] || match[2]);
+  }
+  return newTranslations;
+}
+
+function getFileAndLineForTranslation(key) {
+  try {
+    const result = execSync(`git grep -n "$t('${key}')" "$__('${key}')"`, { encoding: 'utf-8' });
+    const [file, line] = result.split(':');
+    return { file, line: line.trim() };
+  } catch (error) {
+    return { file: 'Unknown', line: 'Unknown' };
+  }
 }
 
 async function main(bearerToken) {
   try {
     const existingTranslations = await getTranslations(bearerToken);
+    const scannedTranslations = scanForTranslations();
+    const newTranslationsFromLatestCommit = getNewTranslationsFromLatestCommit();
 
-    let mdContent = '';
-    try {
-      mdContent = fs.readFileSync('translations.md', 'utf-8');
-    } catch (error) {
-      // File doesn't exist yet
+    const allTranslations = new Map();
+
+    for (const translation of scannedTranslations) {
+      const status = existingTranslations.has(translation) ? 'Existing' : 'Missing';
+      const { file, line } = getFileAndLineForTranslation(translation);
+      allTranslations.set(translation, { status, file, line, isNew: newTranslationsFromLatestCommit.has(translation) });
     }
 
-    const previousTranslations = mdContent ? parseMdTable(mdContent) : [];
-    const missingTranslations = previousTranslations.filter(t => t.status === 'Missing');
+    const result = {
+      allTranslations: Array.from(allTranslations, ([key, value]) => ({ key, ...value })),
+      newTranslations: Array.from(newTranslationsFromLatestCommit)
+    };
 
-    const diff = execSync('git diff HEAD^ HEAD').toString();
-    const newTranslations = [];
-    const pattern = /['\"]([\w_]+)['\"]:\s*['\"](.+?)['\"]|['\"]([\w_]+)['\"]:\s*$/g;
-    let match;
-
-    while ((match = pattern.exec(diff)) !== null) {
-      const key = match[1] || match[3];
-      if (key) {
-        const location = findTranslationLocation(key);
-        if (location) {
-          if (!existingTranslations.has(key)) {
-            newTranslations.push({ key, ...location, status: 'Added' });
-          } else {
-            const missingIndex = missingTranslations.findIndex(t => t.key === key);
-            if (missingIndex !== -1) {
-              missingTranslations[missingIndex] = { key, ...location, status: 'Added' };
-            }
-          }
-        }
-      }
-    }
-
-    const updatedTranslations = [
-      ...previousTranslations.filter(t => t.status !== 'Missing'),
-      ...missingTranslations,
-      ...newTranslations
-    ];
-
-    console.log(JSON.stringify(updatedTranslations));
+    console.log(JSON.stringify(result));
   } catch (error) {
     console.error('Error in main function:', error.message);
     process.exit(1);
