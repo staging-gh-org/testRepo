@@ -70,7 +70,7 @@ jobs:
             status=$(echo $translation | jq -r '.status')
             file=$(echo $translation | jq -r '.file')
             line=$(echo $translation | jq -r '.line')
-            echo "| \`$key\` | $status | $file:$line |" >> "$MD_FILE"
+            echo "| \`$key\` | $status | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) |" >> "$MD_FILE"
           done
 
           git add "$MD_FILE"
