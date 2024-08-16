@@ -32,7 +32,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install axios
+        run: npm install axios glob
 
       - name: Check for translations
         id: check_translations
@@ -44,15 +44,16 @@ jobs:
             echo "Error: $SCRIPT_PATH not found"
             exit 1
           fi
-          TRANSLATIONS=$(node --experimental-modules --es-module-specifier-resolution=node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
-          echo "translations=$TRANSLATIONS" >> $GITHUB_OUTPUT
+          RESULT=$(node --experimental-modules --es-module-specifier-resolution=node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
 
       - name: Update translations file
-        if: steps.check_translations.outputs.translations != '[]'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          TRANSLATIONS='${{ steps.check_translations.outputs.translations }}'
+          RESULT='${{ steps.check_translations.outputs.result }}'
+          ALL_TRANSLATIONS=$(echo "$RESULT" | jq -r '.allTranslations')
+          NEW_TRANSLATIONS=$(echo "$RESULT" | jq -r '.newTranslations')
           MD_FILE="translations.md"
 
           git config --global user.name "github-actions[bot]"
@@ -64,16 +65,28 @@ jobs:
           echo "| Translation Key | Status | Location |" > "$MD_FILE"
           echo "|-----------------|--------|----------|" >> "$MD_FILE"
 
-          echo "$TRANSLATIONS" | jq -c '.[]' | while read -r translation; do
+          echo "$ALL_TRANSLATIONS" | jq -c '.[]' | while read -r translation; do
             key=$(echo $translation | jq -r '.key')
             status=$(echo $translation | jq -r '.status')
             file=$(echo $translation | jq -r '.file')
             line=$(echo $translation | jq -r '.line')
-            echo "| [\`$key\`](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $status | $file:$line |" >> "$MD_FILE"
+            echo "| \`$key\` | $status | $file:$line |" >> "$MD_FILE"
           done
 
           git add "$MD_FILE"
-          git commit -m "Update translations status"
+
+          COMMIT_MESSAGE="Update translations status"
+          NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
+          
+          if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
+            COMMITTER=$(git log -1 --pretty=format:'%an')
+            COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added by $COMMITTER:"
+            echo "$NEW_TRANSLATIONS" | jq -r '.[]' | while read -r new_translation; do
+              COMMIT_MESSAGE="$COMMIT_MESSAGE\n- $new_translation"
+            done
+          fi
+
+          git commit -m "$COMMIT_MESSAGE"
           git push origin $BRANCH_NAME
 
           PR_URL=$(gh pr create --title "Update translations status" \
