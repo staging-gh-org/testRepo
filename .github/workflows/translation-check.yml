@@ -61,7 +61,7 @@ jobs:
           RESULT=$(node --experimental-modules --es-module-specifier-resolution=node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
           echo "result=$RESULT" >> $GITHUB_OUTPUT
 
-      - name: Update translations file
+      - name: Update translations file and create PRs
         if: steps.check_changes.outputs.only_translations_md == 'false' && fromJson(steps.check_translations.outputs.result).hasChanges
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -73,9 +73,6 @@ jobs:
 
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
-          git checkout -b $BRANCH_NAME
 
           echo "| Translation Key | Status | Location | Committer |" > "$MD_FILE"
           echo "|-----------------|--------|----------|-----------|" >> "$MD_FILE"
@@ -94,49 +91,48 @@ jobs:
             echo "| \`$key\` | $status_emoji | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $committer |" >> "$MD_FILE"
           done
 
-          git add "$MD_FILE"
-
           NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
+          
           if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
             echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
               key=$(echo $new_translation | jq -r '.key')
               committer=$(echo $new_translation | jq -r '.committer')
-              git commit -m "Translation \`$key\` was added by \`$committer\`"
+              
+              BRANCH_NAME="update-translation-$(date +%Y%m%d%H%M%S)-${key}"
+              git checkout -b $BRANCH_NAME
+              
+              git add "$MD_FILE"
+              
+              COMMIT_MESSAGE="Translation \`$key\` was added by \`$committer\`"
+              git commit -m "$COMMIT_MESSAGE"
+              git push origin $BRANCH_NAME
+
+              PR_URL=$(gh pr create --title "$COMMIT_MESSAGE" \
+                                    --body "Automatically generated PR to update translation status for $key" \
+                                    --base master \
+                                    --head $BRANCH_NAME)
+
+              if gh pr checks $PR_URL; then
+                echo "Checks found, waiting for completion..."
+                gh pr checks $PR_URL --watch
+                if gh pr checks $PR_URL; then
+                  echo "Checks passed, merging PR"
+                  gh pr merge $PR_URL --merge --admin
+                else
+                  echo "Checks failed, PR was not merged"
+                  exit 1
+                fi
+              else
+                echo "No checks found, merging PR immediately"
+                gh pr merge $PR_URL --merge --admin
+              fi
+
+              git checkout master
+              git pull origin master
             done
           else
-            git commit -m "Update translations status"
-          fi
-
-          git push origin $BRANCH_NAME
-
-          PR_BODY="Automatically generated PR to update the translations status"
-          if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
-            PR_BODY="$PR_BODY\n\nNew translations added in this PR:"
-            echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
-              key=$(echo $new_translation | jq -r '.key')
-              committer=$(echo $new_translation | jq -r '.committer')
-              PR_BODY="$PR_BODY\n- \`$key\` added by \`$committer\`"
-            done
-          fi
-
-          PR_URL=$(gh pr create --title "Update translations status" \
-                                --body "$PR_BODY" \
-                                --base master \
-                                --head $BRANCH_NAME)
-
-          if gh pr checks $PR_URL; then
-            echo "Checks found, waiting for completion..."
-            gh pr checks $PR_URL --watch
-            if gh pr checks $PR_URL; then
-              echo "Checks passed, merging PR"
-              gh pr merge $PR_URL --merge --admin
-            else
-              echo "Checks failed, PR was not merged"
-              exit 1
-            fi
-          else
-            echo "No checks found, merging PR immediately"
-            gh pr merge $PR_URL --merge --admin
+            echo "No new translations to commit. Exiting workflow."
+            exit 0
           fi
 
       - name: Clean up
@@ -144,23 +140,17 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
-          
-          PR_URL=$(gh pr list --head $BRANCH_NAME --json url --jq '.[0].url')
-          if [ ! -z "$PR_URL" ]; then
-            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
-            
-            if [ "$PR_STATE" = "MERGED" ]; then
-              echo "PR was merged, deleting branch $BRANCH_NAME"
-            elif [ "$PR_STATE" = "OPEN" ]; then
-              echo "PR is still open, closing PR"
-              gh pr close $PR_URL
+          git fetch origin
+          for branch in $(git branch -r | grep 'origin/update-translation-' | sed 's/origin\///'); do
+            PR_URL=$(gh pr list --head $branch --state all --json url --jq '.[0].url')
+            if [ ! -z "$PR_URL" ]; then
+              PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
+              
+              if [ "$PR_STATE" = "MERGED" ] || [ "$PR_STATE" = "CLOSED" ]; then
+                echo "Deleting branch $branch"
+                git push origin --delete $branch
+              fi
             else
-              echo "PR is in state $PR_STATE or doesn't exist"
+              echo "No PR found for branch $branch"
             fi
-          else
-            echo "No PR was created for this branch"
-          fi
-          
-          # Always try to delete the branch, ignoring errors
-          git push origin --delete $BRANCH_NAME || true
+          done
