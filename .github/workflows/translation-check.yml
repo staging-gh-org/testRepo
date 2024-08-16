@@ -47,9 +47,13 @@ jobs:
             const path = require('path');
 
             async function getTranslations() {
+              const bearerToken = process.env.HATCHER_BEARER_TOKEN;
+              if (!bearerToken) {
+                throw new Error('HATCHER_BEARER_TOKEN is not set');
+              }
               try {
                 const response = await axios.get('https://hq.hatcher.com/api/languages/en', {
-                  headers: { 'Authorization': `Bearer ${process.env.HATCHER_BEARER_TOKEN}` }
+                  headers: { 'Authorization': `Bearer ${bearerToken}` }
                 });
                 return new Set(Object.keys(response.data));
               } catch (error) {
@@ -81,52 +85,57 @@ jobs:
             }
 
             async function main() {
-              const existingTranslations = await getTranslations();
-
-              let mdContent = '';
               try {
-                mdContent = fs.readFileSync('translations.md', 'utf-8');
-              } catch (error) {
-                // File doesn't exist yet
-              }
+                const existingTranslations = await getTranslations();
 
-              const previousTranslations = mdContent ? parseMdTable(mdContent) : [];
-              const missingTranslations = previousTranslations.filter(t => t.status === 'Missing');
+                let mdContent = '';
+                try {
+                  mdContent = fs.readFileSync('translations.md', 'utf-8');
+                } catch (error) {
+                  // File doesn't exist yet
+                }
 
-              const diff = execSync('git diff HEAD^ HEAD').toString();
-              const newTranslations = [];
-              const pattern = /['\"]([\w_]+)['\"]:\s*['\"](.+?)['\"]|['\"]([\w_]+)['\"]:\s*$/g;
-              let match;
+                const previousTranslations = mdContent ? parseMdTable(mdContent) : [];
+                const missingTranslations = previousTranslations.filter(t => t.status === 'Missing');
 
-              while ((match = pattern.exec(diff)) !== null) {
-                const key = match[1] || match[3];
-                if (key) {
-                  const location = findTranslationLocation(key);
-                  if (location) {
-                    if (!existingTranslations.has(key)) {
-                      newTranslations.push({ key, ...location, status: 'Added' });
-                    } else {
-                      const missingIndex = missingTranslations.findIndex(t => t.key === key);
-                      if (missingIndex !== -1) {
-                        missingTranslations[missingIndex] = { key, ...location, status: 'Added' };
+                const diff = execSync('git diff HEAD^ HEAD').toString();
+                const newTranslations = [];
+                const pattern = /['\"]([\w_]+)['\"]:\s*['\"](.+?)['\"]|['\"]([\w_]+)['\"]:\s*$/g;
+                let match;
+
+                while ((match = pattern.exec(diff)) !== null) {
+                  const key = match[1] || match[3];
+                  if (key) {
+                    const location = findTranslationLocation(key);
+                    if (location) {
+                      if (!existingTranslations.has(key)) {
+                        newTranslations.push({ key, ...location, status: 'Added' });
+                      } else {
+                        const missingIndex = missingTranslations.findIndex(t => t.key === key);
+                        if (missingIndex !== -1) {
+                          missingTranslations[missingIndex] = { key, ...location, status: 'Added' };
+                        }
                       }
                     }
                   }
                 }
+
+                const updatedTranslations = [
+                  ...previousTranslations.filter(t => t.status !== 'Missing'),
+                  ...missingTranslations,
+                  ...newTranslations
+                ];
+
+                console.log(JSON.stringify(updatedTranslations));
+              } catch (error) {
+                console.error('Error in main function:', error.message);
+                process.exit(1);
               }
-
-              const updatedTranslations = [
-                ...previousTranslations.filter(t => t.status !== 'Missing'),
-                ...missingTranslations,
-                ...newTranslations
-              ];
-
-              console.log(JSON.stringify(updatedTranslations));
             }
 
             main();
           ")
-          echo "::set-output name=translations::$TRANSLATIONS"
+          echo "translations=$TRANSLATIONS" >> $GITHUB_OUTPUT
 
       - name: Update translations file
         if: steps.check_translations.outputs.translations != '[]'
@@ -145,7 +154,7 @@ jobs:
           echo "| Translation Key | Status | Location |" > "$MD_FILE"
           echo "|-----------------|--------|----------|" >> "$MD_FILE"
 
-          for translation in $(echo "$TRANSLATIONS" | jq -c '.[]'); do
+          echo "$TRANSLATIONS" | jq -c '.[]' | while read -r translation; do
             key=$(echo $translation | jq -r '.key')
             status=$(echo $translation | jq -r '.status')
             file=$(echo $translation | jq -r '.file')
