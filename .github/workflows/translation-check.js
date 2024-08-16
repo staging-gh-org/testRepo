@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import { execSync } from 'child_process';
 import axios from 'axios';
 import { glob } from 'glob';
@@ -49,12 +48,10 @@ function scanForTranslations() {
 function getNewTranslationsFromLatestCommit() {
   const diff = execSync('git diff HEAD^ HEAD').toString();
   const pattern = /\+.*\$t\(['"](.+?)['"]\)|\+.*\$__\(['"](.+?)['"]\)/g;
-  const newTranslations = new Map();
+  const newTranslations = new Set();
   let match;
   while ((match = pattern.exec(diff)) !== null) {
-    const key = match[1] || match[2];
-    const committer = execSync(`git log -1 --format="%an" -- $(git diff-tree --no-commit-id --name-only -r HEAD)`).toString().trim();
-    newTranslations.set(key, committer);
+    newTranslations.add(match[1] || match[2]);
   }
   return newTranslations;
 }
@@ -65,8 +62,8 @@ function getPreviousTranslations() {
     const lines = content.split('\n').slice(2); // Skip header
     const translations = new Map();
     lines.forEach(line => {
-      const [key, status, location, committer] = line.split('|').map(cell => cell.trim());
-      translations.set(key.replace(/[`]/g, ''), { status, location, committer });
+      const [key, status, location] = line.split('|').map(cell => cell.trim());
+      translations.set(key.replace(/[`🔴🟢]/g, ''), { status: status === '🟢' ? 'Existing' : 'Missing', location });
     });
     return translations;
   } catch (error) {
@@ -87,10 +84,10 @@ async function main(bearerToken) {
     for (const [key, location] of scannedTranslations.entries()) {
       const status = existingTranslations.has(key) ? 'Existing' : 'Missing';
       const isNew = newTranslationsFromLatestCommit.has(key);
-      const committer = isNew ? newTranslationsFromLatestCommit.get(key) : '';
+      const committer = isNew ? execSync(`git log -1 --format="%an" -- ${location.file}`).toString().trim() : '';
       const previous = previousTranslations.get(key);
 
-      if (isNew || !previous || status !== previous.status || `${location.file}:${location.line}` !== previous.location || committer !== previous.committer) {
+      if (isNew || !previous || status !== previous.status || `${location.file}:${location.line}` !== previous.location) {
         hasChanges = true;
       }
 
@@ -114,7 +111,7 @@ async function main(bearerToken) {
 
     const result = {
       allTranslations,
-      newTranslations: Array.from(newTranslationsFromLatestCommit.keys()),
+      newTranslations: Array.from(newTranslationsFromLatestCommit),
       hasChanges
     };
 
