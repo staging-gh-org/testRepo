@@ -1,3 +1,3 @@
 | Translation Key | Status | Location | Committer |
 |-----------------|--------|----------|-----------|
-| `hello` | Missing | [src/App.vue:12](https://github.com/staging-gh-org/testRepo/blob/1ddd3c3f936c9e707e2de9aee9678d75c9906b2a/src/App.vue#L12) |  |
+| `hello` | Missing | [src/App.vue:12](https://github.com/staging-gh-org/testRepo/blob/3f5a3c5245506d68081f3ea81497843985f5bee8/src/App.vue#L12) |  |
