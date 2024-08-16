@@ -1,0 +1,204 @@
+name: Translation Check
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  check_translations:
+    runs-on: ubuntu-latest
+    environment: Hatcher+ FAAST
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
+          private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install axios
+
+      - name: Check for translations
+        id: check_translations
+        env:
+          HATCHER_BEARER_TOKEN: ${{ secrets.HATCHER_BEARER_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          TRANSLATIONS=$(node -e "
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            const axios = require('axios');
+            const path = require('path');
+
+            async function getTranslations() {
+              try {
+                const response = await axios.get('https://hq.hatcher.com/api/languages/en', {
+                  headers: { 'Authorization': `Bearer ${process.env.HATCHER_BEARER_TOKEN}` }
+                });
+                return new Set(Object.keys(response.data));
+              } catch (error) {
+                console.error('Error fetching translations:', error.message);
+                return new Set();
+              }
+            }
+
+            function findTranslationLocation(key) {
+              const command = `git diff HEAD^ HEAD -U0 | grep -n "+.*['\\"]${key}['\\"]"`;
+              try {
+                const result = execSync(command, { encoding: 'utf-8' });
+                const match = result.match(/\+\+\+ b\/(.+)\n@@ .+ @@\n(\d+):/);
+                if (match) {
+                  return { file: match[1], line: match[2] };
+                }
+              } catch (error) {
+                // grep returns non-zero exit code if no match found
+              }
+              return null;
+            }
+
+            function parseMdTable(content) {
+              const lines = content.split('\n').slice(2); // Skip header
+              return lines.map(line => {
+                const [key, status, location] = line.split('|').map(cell => cell.trim());
+                return { key: key.replace(/[\[\]\`]/g, ''), status, location };
+              });
+            }
+
+            async function main() {
+              const existingTranslations = await getTranslations();
+
+              let mdContent = '';
+              try {
+                mdContent = fs.readFileSync('translations.md', 'utf-8');
+              } catch (error) {
+                // File doesn't exist yet
+              }
+
+              const previousTranslations = mdContent ? parseMdTable(mdContent) : [];
+              const missingTranslations = previousTranslations.filter(t => t.status === 'Missing');
+
+              const diff = execSync('git diff HEAD^ HEAD').toString();
+              const newTranslations = [];
+              const pattern = /['\"]([\w_]+)['\"]:\s*['\"](.+?)['\"]|['\"]([\w_]+)['\"]:\s*$/g;
+              let match;
+
+              while ((match = pattern.exec(diff)) !== null) {
+                const key = match[1] || match[3];
+                if (key) {
+                  const location = findTranslationLocation(key);
+                  if (location) {
+                    if (!existingTranslations.has(key)) {
+                      newTranslations.push({ key, ...location, status: 'Added' });
+                    } else {
+                      const missingIndex = missingTranslations.findIndex(t => t.key === key);
+                      if (missingIndex !== -1) {
+                        missingTranslations[missingIndex] = { key, ...location, status: 'Added' };
+                      }
+                    }
+                  }
+                }
+              }
+
+              const updatedTranslations = [
+                ...previousTranslations.filter(t => t.status !== 'Missing'),
+                ...missingTranslations,
+                ...newTranslations
+              ];
+
+              console.log(JSON.stringify(updatedTranslations));
+            }
+
+            main();
+          ")
+          echo "::set-output name=translations::$TRANSLATIONS"
+
+      - name: Update translations file
+        if: steps.check_translations.outputs.translations != '[]'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          TRANSLATIONS=${{ steps.check_translations.outputs.translations }}
+          MD_FILE="translations.md"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
+          git checkout -b $BRANCH_NAME
+
+          echo "| Translation Key | Status | Location |" > "$MD_FILE"
+          echo "|-----------------|--------|----------|" >> "$MD_FILE"
+
+          for translation in $(echo "$TRANSLATIONS" | jq -c '.[]'); do
+            key=$(echo $translation | jq -r '.key')
+            status=$(echo $translation | jq -r '.status')
+            file=$(echo $translation | jq -r '.file')
+            line=$(echo $translation | jq -r '.line')
+            echo "| [\`$key\`](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $status | $file:$line |" >> "$MD_FILE"
+          done
+
+          git add "$MD_FILE"
+          git commit -m "Update translations status"
+          git push origin $BRANCH_NAME
+
+          PR_URL=$(gh pr create --title "Update translations status" \
+                                --body "Automatically generated PR to update the translations status" \
+                                --base master \
+                                --head $BRANCH_NAME)
+
+          if gh pr checks $PR_URL; then
+            echo "Checks found, waiting for completion..."
+            gh pr checks $PR_URL --watch
+            if gh pr checks $PR_URL; then
+              echo "Checks passed, merging PR"
+              gh pr merge $PR_URL --merge --admin
+            else
+              echo "Checks failed, PR was not merged"
+              exit 1
+            fi
+          else
+            echo "No checks found, merging PR immediately"
+            gh pr merge $PR_URL --merge --admin
+          fi
+
+      - name: Clean up
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
+          
+          PR_URL=$(gh pr list --head $BRANCH_NAME --json url --jq '.[0].url')
+          if [ ! -z "$PR_URL" ]; then
+            PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
+            
+            if [ "$PR_STATE" = "MERGED" ]; then
+              echo "PR was merged, deleting branch $BRANCH_NAME"
+            elif [ "$PR_STATE" = "OPEN" ]; then
+              echo "PR is still open, closing PR"
+              gh pr close $PR_URL
+            else
+              echo "PR is in state $PR_STATE or doesn't exist"
+            fi
+          else
+            echo "No PR was created for this branch"
+          fi
+          
+          # Always try to delete the branch, ignoring errors
+          git push origin --delete $BRANCH_NAME || true
