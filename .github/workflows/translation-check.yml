@@ -97,14 +97,11 @@ jobs:
           git add "$MD_FILE"
 
           NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
-          
           if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
             echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
               key=$(echo $new_translation | jq -r '.key')
               committer=$(echo $new_translation | jq -r '.committer')
-              COMMIT_MESSAGE="Translation \`$key\` was added by \`$committer\`"
-              git commit -m "$COMMIT_MESSAGE"
-              git add "$MD_FILE"  # Restage the file for the next commit
+              git commit -m "Translation \`$key\` was added by \`$committer\`"
             done
           else
             git commit -m "Update translations status"
@@ -112,8 +109,18 @@ jobs:
 
           git push origin $BRANCH_NAME
 
+          PR_BODY="Automatically generated PR to update the translations status"
+          if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
+            PR_BODY="$PR_BODY\n\nNew translations added in this PR:"
+            echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
+              key=$(echo $new_translation | jq -r '.key')
+              committer=$(echo $new_translation | jq -r '.committer')
+              PR_BODY="$PR_BODY\n- \`$key\` added by \`$committer\`"
+            done
+          fi
+
           PR_URL=$(gh pr create --title "Update translations status" \
-                                --body "Automatically generated PR to update the translations status" \
+                                --body "$PR_BODY" \
                                 --base master \
                                 --head $BRANCH_NAME)
 
