@@ -72,7 +72,12 @@ jobs:
             file=$(echo $translation | jq -r '.file')
             line=$(echo $translation | jq -r '.line')
             committer=$(echo $translation | jq -r '.committer')
-            echo "| \`$key\` | $status | $file:$line | $committer |" >> "$MD_FILE"
+            if [ "$status" == "Missing" ]; then
+              status_emoji="🔴"
+            else
+              status_emoji="🟢"
+            fi
+            echo "| \`$key\` | $status_emoji | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $committer |" >> "$MD_FILE"
           done
 
           git add "$MD_FILE"
