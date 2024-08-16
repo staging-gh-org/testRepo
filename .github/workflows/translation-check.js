@@ -65,8 +65,8 @@ function getPreviousTranslations() {
     const lines = content.split('\n').slice(2); // Skip header
     const translations = new Map();
     lines.forEach(line => {
-      const [key, status, , committer] = line.split('|').map(cell => cell.trim());
-      translations.set(key.replace(/[`]/g, ''), { status, committer });
+      const [key, status, location, committer] = line.split('|').map(cell => cell.trim());
+      translations.set(key.replace(/[`]/g, ''), { status, location, committer });
     });
     return translations;
   } catch (error) {
@@ -88,9 +88,9 @@ async function main(bearerToken) {
       const status = existingTranslations.has(key) ? 'Existing' : 'Missing';
       const isNew = newTranslationsFromLatestCommit.has(key);
       const committer = isNew ? newTranslationsFromLatestCommit.get(key) : '';
-      const previous = previousTranslations.get(key) || {};
+      const previous = previousTranslations.get(key);
 
-      if (isNew || status !== previous.status || committer !== previous.committer) {
+      if (isNew || !previous || status !== previous.status || `${location.file}:${location.line}` !== previous.location || committer !== previous.committer) {
         hasChanges = true;
       }
 
