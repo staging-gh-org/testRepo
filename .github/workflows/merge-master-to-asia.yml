@@ -1,4 +1,4 @@
-name: Auto-Merge master to asia
+name: Translation Check
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  merge_master_to_asia:
+  check_translations:
     runs-on: ubuntu-latest
     environment: Hatcher+ FAAST
     permissions:
@@ -20,66 +20,131 @@ jobs:
           app-id: ${{ vars.HATCHER_PLUS_APP_ID }}
           private-key: ${{ secrets.HATCHER_PLUS_APP_SECRET }}
 
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Set up Git
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install axios glob
+
+      - name: Check for translations
+        id: check_translations
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          SCRIPT_PATH=".github/workflows/translation-check.js"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            echo "Error: $SCRIPT_PATH not found"
+            exit 1
+          fi
+          RESULT=$(node --experimental-modules --es-module-specifier-resolution=node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
+
+      - name: Update translations file
+        id: update_translations
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          RESULT='${{ steps.check_translations.outputs.result }}'
+          ALL_TRANSLATIONS=$(echo "$RESULT" | jq -r '.allTranslations')
+          NEW_TRANSLATIONS=$(echo "$RESULT" | jq -r '.newTranslations')
+          MD_FILE="translations.md"
+
+          # Check if the MD file exists and read its content
+          if [ -f "$MD_FILE" ]; then
+            OLD_MD_CONTENT=$(cat "$MD_FILE")
+          else
+            OLD_MD_CONTENT=""
+          fi
+
+          # Generate new MD content
+          NEW_MD_CONTENT="| Translation Key | Status | Location | Committer |
+          |-----------------|--------|----------|-----------|
+          $(echo "$ALL_TRANSLATIONS" | jq -r '.[] | "| `\(.key)` | \(.status) | [\(.file):\(.line)](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/\(.file)#L\(.line)) | \(.committer) |"')"
+
+          # Compare old and new content
+          if [ "$OLD_MD_CONTENT" = "$NEW_MD_CONTENT" ]; then
+            echo "No changes detected in translations."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "$NEW_MD_CONTENT" > "$MD_FILE"
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Force merge master to asia
-        id: force_merge
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          BRANCH_NAME="force-merge-master-to-asia-$(date +%Y%m%d%H%M%S)"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
+          git checkout -b $BRANCH_NAME
+
+          git add "$MD_FILE"
+
+          COMMIT_MESSAGE="Update translations status"
+          NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
           
-          git checkout -b $BRANCH_NAME origin/master
-          git fetch origin asia
-          
-          # Force merge master into asia, favoring master's changes
-          git merge origin/asia -X ours --no-edit
-          
+          if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
+            COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added:"
+            echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
+              key=$(echo $new_translation | jq -r '.key')
+              committer=$(echo $new_translation | jq -r '.committer')
+              COMMIT_MESSAGE="$COMMIT_MESSAGE\n- '$key' added by $committer"
+            done
+          fi
+
+          git commit -m "$COMMIT_MESSAGE"
           git push origin $BRANCH_NAME
 
-          PR_URL=$(gh pr create --title "Force Merge master to asia" \
-                                --body "This pull request forcefully merges changes from master to asia, resolving conflicts in favor of master." \
-                                --base asia \
+          PR_URL=$(gh pr create --title "Update translations status" \
+                                --body "Automatically generated PR to update the translations status" \
+                                --base master \
                                 --head $BRANCH_NAME)
 
-          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
-          echo "Created PR: $PR_URL"
+          if gh pr checks $PR_URL; then
+            echo "Checks found, waiting for completion..."
+            gh pr checks $PR_URL --watch
+            if gh pr checks $PR_URL; then
+              echo "Checks passed, merging PR"
+              gh pr merge $PR_URL --merge --admin
+            else
+              echo "Checks failed, PR was not merged"
+              exit 1
+            fi
+          else
+            echo "No checks found, merging PR immediately"
+            gh pr merge $PR_URL --merge --admin
+          fi
 
-          echo "Merging PR immediately"
-          gh pr merge $PR_URL --squash --admin
+          echo "has_changes=true" >> $GITHUB_OUTPUT
 
       - name: Clean up
-        if: always()
+        if: steps.update_translations.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          BRANCH_NAME="${{ steps.force_merge.outputs.BRANCH_NAME }}"
-          PR_URL="${{ steps.force_merge.outputs.PR_URL }}"
+          BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
           
-          if [ -n "$PR_URL" ]; then
+          PR_URL=$(gh pr list --head $BRANCH_NAME --json url --jq '.[0].url')
+          if [ ! -z "$PR_URL" ]; then
             PR_STATE=$(gh pr view $PR_URL --json state --jq .state 2>/dev/null)
             
             if [ "$PR_STATE" = "MERGED" ]; then
-              echo "PR was merged successfully"
-            else
-              echo "PR is in state $PR_STATE"
-              # If PR wasn't merged for some reason, close it
+              echo "PR was merged, deleting branch $BRANCH_NAME"
+            elif [ "$PR_STATE" = "OPEN" ]; then
+              echo "PR is still open, closing PR"
               gh pr close $PR_URL
+            else
+              echo "PR is in state $PR_STATE or doesn't exist"
             fi
           else
-            echo "No PR was created"
+            echo "No PR was created for this branch"
           fi
           
           # Always try to delete the branch, ignoring errors
-          echo "Attempting to delete branch $BRANCH_NAME"
-          git push origin --delete $BRANCH_NAME || echo "Branch $BRANCH_NAME may have already been deleted"
+          git push origin --delete $BRANCH_NAME || true
