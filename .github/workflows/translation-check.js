@@ -49,12 +49,29 @@ function scanForTranslations() {
 function getNewTranslationsFromLatestCommit() {
   const diff = execSync('git diff HEAD^ HEAD').toString();
   const pattern = /\+.*\$t\(['"](.+?)['"]\)|\+.*\$__\(['"](.+?)['"]\)/g;
-  const newTranslations = new Set();
+  const newTranslations = new Map();
   let match;
   while ((match = pattern.exec(diff)) !== null) {
-    newTranslations.add(match[1] || match[2]);
+    const key = match[1] || match[2];
+    const committer = execSync(`git log -1 --format="%an" -- $(git diff-tree --no-commit-id --name-only -r HEAD)`).toString().trim();
+    newTranslations.set(key, committer);
   }
   return newTranslations;
+}
+
+function getPreviousTranslations() {
+  try {
+    const content = fs.readFileSync('translations.md', 'utf-8');
+    const lines = content.split('\n').slice(2); // Skip header
+    const translations = new Map();
+    lines.forEach(line => {
+      const [key, status] = line.split('|').map(cell => cell.trim());
+      translations.set(key.replace(/[`]/g, ''), status);
+    });
+    return translations;
+  } catch (error) {
+    return new Map();
+  }
 }
 
 async function main(bearerToken) {
@@ -62,23 +79,35 @@ async function main(bearerToken) {
     const existingTranslations = await getTranslations(bearerToken);
     const scannedTranslations = scanForTranslations();
     const newTranslationsFromLatestCommit = getNewTranslationsFromLatestCommit();
+    const previousTranslations = getPreviousTranslations();
 
     const allTranslations = [];
+    let hasChanges = false;
 
     for (const [key, location] of scannedTranslations.entries()) {
       const status = existingTranslations.has(key) ? 'Existing' : 'Missing';
+      const isNew = newTranslationsFromLatestCommit.has(key);
+      const committer = isNew ? newTranslationsFromLatestCommit.get(key) : '';
+      const previousStatus = previousTranslations.get(key);
+
+      if (isNew || status !== previousStatus) {
+        hasChanges = true;
+      }
+
       allTranslations.push({
         key,
         status,
         file: location.file,
         line: location.line,
-        isNew: newTranslationsFromLatestCommit.has(key)
+        isNew,
+        committer
       });
     }
 
     const result = {
       allTranslations,
-      newTranslations: Array.from(newTranslationsFromLatestCommit)
+      newTranslations: Array.from(newTranslationsFromLatestCommit.keys()),
+      hasChanges
     };
 
     console.log(JSON.stringify(result));
