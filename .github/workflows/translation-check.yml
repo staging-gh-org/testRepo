@@ -34,26 +34,17 @@ jobs:
       - name: Install dependencies
         run: npm install axios
 
-      - name: Debug file location
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Files in current directory:"
-          ls -la
-          echo "Content of .github/workflows directory:"
-          ls -la .github/workflows
-          echo "Searching for translation-check.js:"
-          find . -name translation-check.js
-
       - name: Check for translations
         id: check_translations
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if [ ! -f "translation-check.js" ]; then
-            echo "Error: translation-check.js not found in the current directory"
+          SCRIPT_PATH=".github/workflows/translation-check.js"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            echo "Error: $SCRIPT_PATH not found"
             exit 1
           fi
-          TRANSLATIONS=$(node translation-check.js "${{ secrets.HATCHER_BEARER_TOKEN }}")
+          TRANSLATIONS=$(node "$SCRIPT_PATH" "${{ secrets.HATCHER_BEARER_TOKEN }}")
           echo "translations=$TRANSLATIONS" >> $GITHUB_OUTPUT
 
       - name: Update translations file
