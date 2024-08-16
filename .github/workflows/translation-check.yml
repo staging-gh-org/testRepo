@@ -48,6 +48,7 @@ jobs:
           echo "result=$RESULT" >> $GITHUB_OUTPUT
 
       - name: Update translations file
+        if: fromJson(steps.check_translations.outputs.result).hasChanges
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -62,15 +63,16 @@ jobs:
           BRANCH_NAME="update-translations-$(date +%Y%m%d%H%M%S)"
           git checkout -b $BRANCH_NAME
 
-          echo "| Translation Key | Status | Location |" > "$MD_FILE"
-          echo "|-----------------|--------|----------|" >> "$MD_FILE"
+          echo "| Translation Key | Status | Location | Committer |" > "$MD_FILE"
+          echo "|-----------------|--------|----------|-----------|" >> "$MD_FILE"
 
           echo "$ALL_TRANSLATIONS" | jq -c '.[]' | while read -r translation; do
             key=$(echo $translation | jq -r '.key')
             status=$(echo $translation | jq -r '.status')
             file=$(echo $translation | jq -r '.file')
             line=$(echo $translation | jq -r '.line')
-            echo "| \`$key\` | $status | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) |" >> "$MD_FILE"
+            committer=$(echo $translation | jq -r '.committer')
+            echo "| \`$key\` | $status | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $committer |" >> "$MD_FILE"
           done
 
           git add "$MD_FILE"
@@ -79,10 +81,11 @@ jobs:
           NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
           
           if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
-            COMMITTER=$(git log -1 --pretty=format:'%an')
-            COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added by $COMMITTER:"
-            echo "$NEW_TRANSLATIONS" | jq -r '.[]' | while read -r new_translation; do
-              COMMIT_MESSAGE="$COMMIT_MESSAGE\n- $new_translation"
+            COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added:"
+            echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
+              key=$(echo $new_translation | jq -r '.key')
+              committer=$(echo $new_translation | jq -r '.committer')
+              COMMIT_MESSAGE="$COMMIT_MESSAGE\n- '$key' added by $committer"
             done
           fi
 
