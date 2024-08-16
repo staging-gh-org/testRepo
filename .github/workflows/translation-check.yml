@@ -48,7 +48,6 @@ jobs:
           echo "result=$RESULT" >> $GITHUB_OUTPUT
 
       - name: Update translations file
-        if: fromJson(steps.check_translations.outputs.result).hasChanges
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -72,49 +71,44 @@ jobs:
             file=$(echo $translation | jq -r '.file')
             line=$(echo $translation | jq -r '.line')
             committer=$(echo $translation | jq -r '.committer')
-            echo "| \`$key\` | $status | [$file:$line](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/$file#L$line) | $committer |" >> "$MD_FILE"
+            echo "| \`$key\` | $status | $file:$line | $committer |" >> "$MD_FILE"
           done
 
           git add "$MD_FILE"
 
-          if ! git diff --cached --quiet; then
-            COMMIT_MESSAGE="Update translations status"
-            NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
-            
-            if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
-              COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added:"
-              echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
-                key=$(echo $new_translation | jq -r '.key')
-                committer=$(echo $new_translation | jq -r '.committer')
-                COMMIT_MESSAGE="$COMMIT_MESSAGE\n- '$key' added by $committer"
-              done
-            fi
+          COMMIT_MESSAGE="Update translations status"
+          NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
+          
+          if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
+            COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added:"
+            echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
+              key=$(echo $new_translation | jq -r '.key')
+              committer=$(echo $new_translation | jq -r '.committer')
+              COMMIT_MESSAGE="$COMMIT_MESSAGE\n- '$key' added by $committer"
+            done
+          fi
 
-            git commit -m "$COMMIT_MESSAGE"
-            git push origin $BRANCH_NAME
+          git commit -m "$COMMIT_MESSAGE"
+          git push origin $BRANCH_NAME
 
-            PR_URL=$(gh pr create --title "Update translations status" \
-                                  --body "Automatically generated PR to update the translations status" \
-                                  --base master \
-                                  --head $BRANCH_NAME)
+          PR_URL=$(gh pr create --title "Update translations status" \
+                                --body "Automatically generated PR to update the translations status" \
+                                --base master \
+                                --head $BRANCH_NAME)
 
+          if gh pr checks $PR_URL; then
+            echo "Checks found, waiting for completion..."
+            gh pr checks $PR_URL --watch
             if gh pr checks $PR_URL; then
-              echo "Checks found, waiting for completion..."
-              gh pr checks $PR_URL --watch
-              if gh pr checks $PR_URL; then
-                echo "Checks passed, merging PR"
-                gh pr merge $PR_URL --merge --admin
-              else
-                echo "Checks failed, PR was not merged"
-                exit 1
-              fi
-            else
-              echo "No checks found, merging PR immediately"
+              echo "Checks passed, merging PR"
               gh pr merge $PR_URL --merge --admin
+            else
+              echo "Checks failed, PR was not merged"
+              exit 1
             fi
           else
-            echo "No changes to commit. Exiting workflow."
-            exit 0
+            echo "No checks found, merging PR immediately"
+            gh pr merge $PR_URL --merge --admin
           fi
 
       - name: Clean up
