@@ -1,6 +1,6 @@
-const fs = require('fs');
-const { execSync } = require('child_process');
-const axios = require('axios');
+import fs from 'fs';
+import { execSync } from 'child_process';
+import axios from 'axios';
 
 async function getTranslations(bearerToken) {
   if (!bearerToken) {
@@ -88,8 +88,9 @@ async function main(bearerToken) {
   }
 }
 
-if (require.main === module) {
+// Check if this module is being run directly
+if (import.meta.url === `file://${process.argv[1]}`) {
   main(process.argv[2]);
 }
 
-module.exports = { main };
+export { main };
