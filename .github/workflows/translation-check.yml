@@ -26,15 +26,29 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
+      - name: Check if only translations.md was changed
+        id: check_changes
+        run: |
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          if [ "$CHANGED_FILES" = "translations.md" ]; then
+            echo "Only translations.md was changed. Exiting workflow."
+            echo "only_translations_md=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "only_translations_md=false" >> $GITHUB_OUTPUT
+
       - name: Set up Node.js
+        if: steps.check_changes.outputs.only_translations_md == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install dependencies
+        if: steps.check_changes.outputs.only_translations_md == 'false'
         run: npm install axios glob
 
       - name: Check for translations
+        if: steps.check_changes.outputs.only_translations_md == 'false'
         id: check_translations
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -48,7 +62,7 @@ jobs:
           echo "result=$RESULT" >> $GITHUB_OUTPUT
 
       - name: Update translations file
-        if: fromJson(steps.check_translations.outputs.result).hasChanges
+        if: steps.check_changes.outputs.only_translations_md == 'false' && fromJson(steps.check_translations.outputs.result).hasChanges
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -87,11 +101,10 @@ jobs:
             NEW_TRANSLATIONS_COUNT=$(echo "$NEW_TRANSLATIONS" | jq '. | length')
             
             if [ "$NEW_TRANSLATIONS_COUNT" -gt 0 ]; then
-              COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nNew translations added:"
               echo "$ALL_TRANSLATIONS" | jq -c '.[] | select(.isNew)' | while read -r new_translation; do
                 key=$(echo $new_translation | jq -r '.key')
                 committer=$(echo $new_translation | jq -r '.committer')
-                COMMIT_MESSAGE="$COMMIT_MESSAGE\n- '$key' added by $committer"
+                COMMIT_MESSAGE="$COMMIT_MESSAGE\n\nTranslation \`$key\` was added by \`$committer\`"
               done
             fi
 
@@ -123,7 +136,7 @@ jobs:
           fi
 
       - name: Clean up
-        if: always()
+        if: always() && steps.check_changes.outputs.only_translations_md == 'false'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |

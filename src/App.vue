@@ -5,16 +5,16 @@ import HelloWorld from './components/HelloWorld.vue'
 <template>
   <div>
     <a href="https://vitejs.dev" target="_blank">
+      {{ $t('12_months') }}
       <img src="/vite.svg" class="logo" alt="Vite logo" />
     </a>
     <a href="https://vuejs.org/" target="_blank">
-      {{ $t('12_months') }}
       <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
 
     </a>
-    {{ $t('hello') }}
   </div>
   <HelloWorld msg="Vite + Vue" />
+  {{ $t('hello1') }}
 </template>
 
 <style scoped>
